@@ -5,7 +5,7 @@
 `default_nettype none
 
 module tt_um_sobel #(
-    parameter IMG_SIZE    = 4,
+    parameter IMG_SIZE    = 6,
     parameter OUTPUT_BITS = 8
 )(
     input  wire [7:0] ui_in,
