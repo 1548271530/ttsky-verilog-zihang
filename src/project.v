@@ -4,8 +4,9 @@
  */
 `default_nettype none
 
-module tt_um_sobel #(
-    parameter IMG_SIZE = 16
+module tt_um_edge_detect #(
+    parameter IMG_SIZE    = 16,
+    parameter OUTPUT_BITS = 4
 )(
     input  wire [7:0] ui_in,
     output wire [7:0] uo_out,
@@ -27,15 +28,16 @@ module tt_um_sobel #(
         end
     endfunction
 
-    localparam ADDR_WIDTH = clog2(IMG_SIZE);
+    localparam ADDR_WIDTH   = clog2(IMG_SIZE);
+    localparam OUTPUT_SHIFT = 8 - OUTPUT_BITS;
 
     assign uio_out = 8'b0;
     assign uio_oe  = 8'b0;
 
     wire _unused = &{ena, ui_in[7:1], 1'b0};
 
-    wire pixel_valid = ui_in[0];
-    wire [7:0] pixel_in = uio_in;
+    wire       pixel_valid = ui_in[0];
+    wire [7:0] pixel_in    = uio_in;
 
     reg [7:0] out;
     assign uo_out = out;
@@ -76,7 +78,16 @@ module tt_um_sobel #(
 
     wire [11:0] abs_gx = gx[11] ? (~gx + 1'b1) : gx;
     wire [11:0] abs_gy = gy[11] ? (~gy + 1'b1) : gy;
-    wire [12:0] mag = abs_gx + abs_gy;
+    wire [12:0] mag    = abs_gx + abs_gy;
+
+    wire [7:0] mag_sat8 = (mag > 13'd255) ? 8'hFF : mag[7:0];
+
+    // OUTPUT_BITS controls effective output precision.
+    // Example:
+    // OUTPUT_BITS = 8 -> uo_out = 0~255
+    // OUTPUT_BITS = 4 -> uo_out = 0~15
+    // OUTPUT_BITS = 1 -> uo_out = 0 or 1
+    wire [7:0] edge_quantized = mag_sat8 >> OUTPUT_SHIFT;
 
     wire valid_window = (row >= 2) && (col >= 2);
 
@@ -88,24 +99,24 @@ module tt_um_sobel #(
             col <= 0;
             out <= 0;
 
-            r0_0 <= 0; r0_1 <= 0;
-            r1_0 <= 0; r1_1 <= 0;
-            r2_0 <= 0; r2_1 <= 0;
+            r0_0 <= 0;
+            r0_1 <= 0;
+            r1_0 <= 0;
+            r1_1 <= 0;
+            r2_0 <= 0;
+            r2_1 <= 0;
 
             for (i = 0; i < IMG_SIZE; i = i + 1) begin
                 linebuf1[i] <= 0;
                 linebuf2[i] <= 0;
             end
+
         end else if (pixel_valid) begin
 
-            if (valid_window) begin
-                if (mag > 13'd255)
-                    out <= 8'hFF;
-                else
-                    out <= mag[7:0];
-            end else begin
+            if (valid_window)
+                out <= edge_quantized;
+            else
                 out <= 8'd0;
-            end
 
             linebuf2[col] <= row1_col2;
             linebuf1[col] <= pixel_in;
@@ -113,14 +124,18 @@ module tt_um_sobel #(
             if (col == IMG_SIZE-1) begin
                 col <= 0;
 
-                r0_0 <= 0; r0_1 <= 0;
-                r1_0 <= 0; r1_1 <= 0;
-                r2_0 <= 0; r2_1 <= 0;
+                r0_0 <= 0;
+                r0_1 <= 0;
+                r1_0 <= 0;
+                r1_1 <= 0;
+                r2_0 <= 0;
+                r2_1 <= 0;
 
                 if (row == IMG_SIZE-1)
                     row <= 0;
                 else
                     row <= row + 1'b1;
+
             end else begin
                 col <= col + 1'b1;
 
