@@ -6,7 +6,7 @@
 
 module tt_um_sobel #(
     parameter IMG_SIZE    = 10,
-    parameter OUTPUT_BITS = 8
+    parameter OUTPUT_BITS = 4
 )(
     input  wire [7:0] ui_in,
     output wire [7:0] uo_out,
