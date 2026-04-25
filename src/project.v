@@ -4,7 +4,9 @@
  */
 `default_nettype none
 
-module tt_um_sobel (
+module tt_um_edge_detect #(
+    parameter IMG_SIZE = 16
+)(
     input  wire [7:0] ui_in,
     output wire [7:0] uo_out,
     input  wire [7:0] uio_in,
@@ -15,70 +17,41 @@ module tt_um_sobel (
     input  wire       rst_n
 );
 
-    // ------------------------------------------------
-    // Unused / fixed IO
-    // ------------------------------------------------
+    function integer clog2;
+        input integer value;
+        integer i;
+        begin
+            clog2 = 0;
+            for (i = value - 1; i > 0; i = i >> 1)
+                clog2 = clog2 + 1;
+        end
+    endfunction
+
+    localparam ADDR_WIDTH = clog2(IMG_SIZE);
 
     assign uio_out = 8'b0;
     assign uio_oe  = 8'b0;
 
-    // avoid unused warnings
     wire _unused = &{ena, ui_in[7:1], 1'b0};
 
-    // ------------------------------------------------
-    // Input interface
-    // ------------------------------------------------
-
-    // ui_in[0] = pixel_valid
     wire pixel_valid = ui_in[0];
-
-    // uio_in[7:0] = 8-bit grayscale pixel input
     wire [7:0] pixel_in = uio_in;
 
-    // ------------------------------------------------
-    // Output interface
-    // ------------------------------------------------
+    reg [7:0] out;
+    assign uo_out = out;
 
-    // Only output 1-bit edge flag:
-    // uo_out[0] = edge detected
-    // uo_out[7:1] = 0
-    reg edge_flag;
+    reg [ADDR_WIDTH-1:0] row;
+    reg [ADDR_WIDTH-1:0] col;
 
-    assign uo_out = {7'b0, edge_flag};
+    reg [7:0] linebuf1 [0:IMG_SIZE-1];
+    reg [7:0] linebuf2 [0:IMG_SIZE-1];
 
-    // ------------------------------------------------
-    // 8x8 image counters
-    // ------------------------------------------------
-
-    reg [2:0] row;
-    reg [2:0] col;
-
-    // ------------------------------------------------
-    // True line buffers
-    //
-    // linebuf1 = previous row
-    // linebuf2 = row before previous row
-    // ------------------------------------------------
-
-    reg [7:0] linebuf1 [0:7];
-    reg [7:0] linebuf2 [0:7];
-
-    // ------------------------------------------------
-    // Horizontal shift registers
-    //
-    // store previous two columns
-    // ------------------------------------------------
-
-    reg [7:0] r0_0, r0_1;  // current row
-    reg [7:0] r1_0, r1_1;  // previous row
-    reg [7:0] r2_0, r2_1;  // row - 2
+    reg [7:0] r0_0, r0_1;
+    reg [7:0] r1_0, r1_1;
+    reg [7:0] r2_0, r2_1;
 
     wire [7:0] row1_col2 = linebuf1[col];
     wire [7:0] row2_col2 = linebuf2[col];
-
-    // ------------------------------------------------
-    // 3x3 window
-    // ------------------------------------------------
 
     wire [7:0] p00 = r2_0;
     wire [7:0] p01 = r2_1;
@@ -92,10 +65,6 @@ module tt_um_sobel (
     wire [7:0] p21 = r0_1;
     wire [7:0] p22 = pixel_in;
 
-    // ------------------------------------------------
-    // Sobel operator
-    // ------------------------------------------------
-
     wire signed [11:0] gx =
         -$signed({4'b0, p00}) + $signed({4'b0, p02})
         -($signed({4'b0, p10}) <<< 1) + ($signed({4'b0, p12}) <<< 1)
@@ -107,94 +76,60 @@ module tt_um_sobel (
 
     wire [11:0] abs_gx = gx[11] ? (~gx + 1'b1) : gx;
     wire [11:0] abs_gy = gy[11] ? (~gy + 1'b1) : gy;
-
     wire [12:0] mag = abs_gx + abs_gy;
 
-    // first valid Sobel output appears at row >= 2 and col >= 2
-    wire valid_window = (row >= 3'd2) && (col >= 3'd2);
-
-    // threshold for binary edge output
-    wire edge_detected = (mag > 13'd100);
+    wire valid_window = (row >= 2) && (col >= 2);
 
     integer i;
 
-    // ------------------------------------------------
-    // Sequential logic
-    // ------------------------------------------------
-
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            row <= 3'd0;
-            col <= 3'd0;
+            row <= 0;
+            col <= 0;
+            out <= 0;
 
-            edge_flag <= 1'b0;
+            r0_0 <= 0; r0_1 <= 0;
+            r1_0 <= 0; r1_1 <= 0;
+            r2_0 <= 0; r2_1 <= 0;
 
-            r0_0 <= 8'd0;
-            r0_1 <= 8'd0;
-
-            r1_0 <= 8'd0;
-            r1_1 <= 8'd0;
-
-            r2_0 <= 8'd0;
-            r2_1 <= 8'd0;
-
-            for (i = 0; i < 8; i = i + 1) begin
-                linebuf1[i] <= 8'd0;
-                linebuf2[i] <= 8'd0;
+            for (i = 0; i < IMG_SIZE; i = i + 1) begin
+                linebuf1[i] <= 0;
+                linebuf2[i] <= 0;
             end
-
         end else if (pixel_valid) begin
 
-            // ----------------------------------------
-            // Output edge flag
-            // ----------------------------------------
-
-            if (valid_window)
-                edge_flag <= edge_detected;
-            else
-                edge_flag <= 1'b0;
-
-            // ----------------------------------------
-            // Update line buffers
-            // ----------------------------------------
+            if (valid_window) begin
+                if (mag > 13'd255)
+                    out <= 8'hFF;
+                else
+                    out <= mag[7:0];
+            end else begin
+                out <= 8'd0;
+            end
 
             linebuf2[col] <= row1_col2;
             linebuf1[col] <= pixel_in;
 
-            // ----------------------------------------
-            // Update horizontal window + counters
-            // ----------------------------------------
+            if (col == IMG_SIZE-1) begin
+                col <= 0;
 
-            if (col == 3'd7) begin
-                col <= 3'd0;
+                r0_0 <= 0; r0_1 <= 0;
+                r1_0 <= 0; r1_1 <= 0;
+                r2_0 <= 0; r2_1 <= 0;
 
-                // clear horizontal history for next row
-                r0_0 <= 8'd0;
-                r0_1 <= 8'd0;
-
-                r1_0 <= 8'd0;
-                r1_1 <= 8'd0;
-
-                r2_0 <= 8'd0;
-                r2_1 <= 8'd0;
-
-                if (row == 3'd7)
-                    row <= 3'd0;
+                if (row == IMG_SIZE-1)
+                    row <= 0;
                 else
-                    row <= row + 3'd1;
-
+                    row <= row + 1'b1;
             end else begin
-                col <= col + 3'd1;
+                col <= col + 1'b1;
 
-                // current row shift
                 r0_0 <= r0_1;
                 r0_1 <= pixel_in;
 
-                // previous row shift
                 r1_0 <= r1_1;
                 r1_1 <= row1_col2;
 
-                // row-2 shift
                 r2_0 <= r2_1;
                 r2_1 <= row2_col2;
             end
