@@ -60,7 +60,7 @@ module tt_um_sobel #(
     wire [7:0] p02 = row2_col2;
 
     wire [7:0] p10 = r1_0;
-    wire [7:0] p11 = r1_1;
+
     wire [7:0] p12 = row1_col2;
 
     wire [7:0] p20 = r0_0;
